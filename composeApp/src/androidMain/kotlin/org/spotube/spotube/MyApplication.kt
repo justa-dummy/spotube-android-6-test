@@ -1,5 +1,48 @@
-# Android 6 backport: on 32-bit ARM, JNA hands the u16 checksum values back without the
-# expected extension, so every API checksum "mismatches" and the library refuses to load.
-# The checksums are only a build-pipeline sanity check, so skip them.
-[bindings.kotlin]
-omit_checksums = true
+/*
+ * Copyright (C) 2026 Kingkor Roy Tirtho and Spotube Contributors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package org.spotube.spotube
+
+import android.app.Application
+import org.spotube.spotube.core.di.initKoin
+import org.spotube.spotube.core.paths.Paths
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import org.koin.android.ext.koin.androidContext
+import org.koin.core.component.KoinComponent
+
+class MyApplication : Application(), KoinComponent {
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    override fun onCreate() {
+        super.onCreate()
+        Paths.init(this)
+        // Also needed when Android restarts only PlaybackService (no Activity): without it every
+        // stream resolve fails with "downloader is null" and the player gets a 404.
+        org.spotube.spotube.core.newpipe.NewPipeDownloader.init(Paths())
+        initKoin {
+            androidContext(this@MyApplication)
+        }
+    }
+
+    override fun onTerminate() {
+        appScope.cancel()
+        super.onTerminate()
+    }
+}
