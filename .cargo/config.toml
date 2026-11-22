@@ -1,0 +1,4 @@
+# Android 6 backport: getrandom() only exists in Bionic from Android 9 (API 28).
+# Make the getrandom crate (0.3+) use the raw syscall instead of the libc function.
+[target.armv7-linux-androideabi]
+rustflags = ["--cfg", 'getrandom_backend="linux_raw"']
