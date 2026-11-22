@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+mod android_getrandom;
 mod metadata;
 mod discord_rpc;
 
