@@ -380,6 +380,8 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = appBuildNumber
         versionName = appVersionName
+        // Android 6 backport: only build the 32-bit ARM library (NVIDIA SHIELD Portable)
+        ndk { abiFilters += listOf("armeabi-v7a") }
     }
     // stable = production channel, nightly = beta channel (own icon, name and installable side by side)
     flavorDimensions += "channel"

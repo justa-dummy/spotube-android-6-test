@@ -15,7 +15,7 @@
 
 [versions]
 android-compileSdk = "37"
-android-minSdk = "28"
+android-minSdk = "23"
 android-targetSdk = "37"
 agp = "9.1.0"
 androidx-activity = "1.13.0"
