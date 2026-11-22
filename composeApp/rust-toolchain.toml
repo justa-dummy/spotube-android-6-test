@@ -1,0 +1,6 @@
+# Android 6 backport: pin Rust. Cargo 1.100+ uses a new build-dir layout that
+# Gobley 0.3.7 can't read (FileNotFoundException .../build/<crate>/<hash>/output).
+[toolchain]
+channel = "1.99.0"
+targets = ["armv7-linux-androideabi"]
+profile = "minimal"
