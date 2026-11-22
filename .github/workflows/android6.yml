@@ -55,18 +55,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.0
       - uses: gradle/actions/setup-gradle@v6
       - run: chmod +x gradlew
-      - name: Show Rust toolchain
-        working-directory: composeApp
-        run: |
-          rustup show
-          rustc -V; cargo -V
       - name: Assemble (unsigned release)
         run: ./gradlew :composeApp:assembleStableRelease --stacktrace
-      - name: Show Cargo build-script folders (diagnostics)
-        if: failure()
-        run: |
-          find composeApp/target -maxdepth 4 -path '*build/quote*' | head -20
-          ls composeApp/target/release/build 2>/dev/null | head -20
       - name: Check native libraries for Android 7+ symbols
         if: always()
         run: |
