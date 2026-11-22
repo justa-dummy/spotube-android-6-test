@@ -20,6 +20,7 @@ package org.spotube.spotube.modules.shell
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.spotube.spotube.core.audioplayer.AudioPlayerInterface
 import org.spotube.spotube.core.audioplayer.AudioPlayerQueue
 import org.spotube.spotube.core.audioplayer.LoopState
@@ -89,7 +90,7 @@ internal fun rememberPlayerUiState(
     val queue by audioPlayerQueue.queueFlow.collectAsState(initial = emptyList())
     val currentQueueEntry by audioPlayerQueue.currentQueueEntryFlow.collectAsState(initial = null)
     val playerState by audioPlayer.playerStateFlow.collectAsState()
-    val position by audioPlayer.positionFlow.collectAsState()
+    val position by audioPlayer.positionFlow.collectAsStateWithLifecycle(minActiveState = playerPositionMinActiveState)
     val duration by audioPlayer.durationFlow.collectAsState()
     val loopState by audioPlayer.loopStateFlow.collectAsState()
     val isShuffling by audioPlayer.shuffleModeFlow.collectAsState()
