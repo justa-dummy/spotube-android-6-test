@@ -19,6 +19,7 @@ package org.spotube.spotube.core.i18n
 
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ProvidedValue
 import androidx.compose.ui.platform.LocalConfiguration
@@ -30,7 +31,11 @@ internal actual fun provideAppLocale(languageTag: String?): ProvidedValue<*> {
     // System resources are never touched by the override below, so they always report the
     // device language (also after the user changes it while the app is running).
     val locale = languageTag?.let(Locale::forLanguageTag)
-        ?: Resources.getSystem().configuration.locales[0]
+        ?: Resources.getSystem().configuration.let { config ->
+            // Android 6 backport: Configuration.getLocales() only exists on Android 7+.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) config.locales[0]
+            else @Suppress("DEPRECATION") config.locale
+        }
     // Compose resources read Locale.getDefault(); also used by non-UI code (notifications).
     Locale.setDefault(locale)
 
