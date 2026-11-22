@@ -65,7 +65,17 @@ jobs:
           rustc -V; cargo -V
           which -a cargo rustc
           if ! cargo -V | grep -q '^cargo 1\.99\.'; then echo "::error::Wrong Rust version"; exit 1; fi
-      - name: Assemble (unsigned release)
+      - name: Create a throwaway signing key
+        run: |
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/ci.jks" -storepass android -keypass android \
+            -alias ci -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Spotube Android 6 CI"
+          cat >> composeApp/local.properties <<EOF2
+          release.signing.storeFile=$RUNNER_TEMP/ci.jks
+          release.signing.storePassword=android
+          release.signing.keyAlias=ci
+          release.signing.keyPassword=android
+          EOF2
+      - name: Assemble (release)
         run: ./gradlew :composeApp:assembleStableRelease --stacktrace
       - name: Show Cargo build-script folders (diagnostics)
         if: failure()
