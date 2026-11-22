@@ -1,0 +1,88 @@
+name: Android 6 build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  COMPOSE_WEBVIEW_REPO: KRTirtho/ComposeNativeWebview
+  COMPOSE_WEBVIEW_COMMIT: b11ac748de1219f9432338c067a2c5dafef3072a
+
+jobs:
+  prepare-deps:
+    name: Prepare compose-webview
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.COMPOSE_WEBVIEW_REPO }}
+          ref: ${{ env.COMPOSE_WEBVIEW_COMMIT }}
+          path: compose-webview
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Publish compose-webview to mavenLocal
+        working-directory: compose-webview
+        run: |
+          chmod +x gradlew
+          ./gradlew publishToMavenLocal
+      - uses: actions/upload-artifact@v7
+        with:
+          name: maven-local
+          path: ~/.m2/repository/
+
+  build-android:
+    name: Android (minSdk 23)
+    needs: prepare-deps
+    timeout-minutes: 150
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: maven-local
+          path: ~/.m2/repository/
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: gradle/actions/setup-gradle@v6
+      - run: chmod +x gradlew
+      - name: Assemble (unsigned release)
+        run: ./gradlew :composeApp:assembleStableRelease --stacktrace
+      - name: Check native libraries for Android 7+ symbols
+        if: always()
+        run: |
+          apk=$(find composeApp/build/outputs/apk -name '*.apk' | head -1)
+          [ -n "$apk" ] || exit 0
+          mkdir -p so && unzip -o -q "$apk" 'lib/*' -d so
+          for f in so/lib/*/*.so; do
+            und=$(readelf --dyn-syms -W "$f" | awk '$7=="UND"{print $8}' | sed 's/@.*//' | sort -u)
+            echo "== $f"; echo $und
+            for sym in getrandom getentropy pthread_getattr_np_ aligned_alloc __system_property_read_callback; do
+              grep -qx "$sym" <<< "$und" && echo "::warning::$f imports $sym (needs a newer Android)"
+            done
+          done
+          true
+      - name: Lint for Android 7+ API calls (report only)
+        if: always()
+        continue-on-error: true
+        run: ./gradlew :composeApp:lintStableRelease -Dlint.baselines.continue=true
+      - name: Collect outputs
+        if: always()
+        run: |
+          mkdir -p out
+          find composeApp/build/outputs/apk -name '*.apk' -exec cp {} out/ \; || true
+          find composeApp/build/reports -name 'lint-results*' -exec cp {} out/ \; || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: spotube-android6
+          path: out/
