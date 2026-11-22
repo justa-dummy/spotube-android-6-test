@@ -7,9 +7,6 @@ permissions:
   contents: read
 
 env:
-  # Force Rust 1.99 for every rustup/cargo call (overrides toolchain files and defaults).
-  # Cargo 1.100 changed its build-dir layout, which Gobley 0.3.7 can't read.
-  RUSTUP_TOOLCHAIN: 1.99.0
   COMPOSE_WEBVIEW_REPO: KRTirtho/ComposeNativeWebview
   COMPOSE_WEBVIEW_COMMIT: b11ac748de1219f9432338c067a2c5dafef3072a
 
@@ -63,19 +60,7 @@ jobs:
         run: |
           rustup show
           rustc -V; cargo -V
-          which -a cargo rustc
-          if ! cargo -V | grep -q '^cargo 1\.99\.'; then echo "::error::Wrong Rust version"; exit 1; fi
-      - name: Create a throwaway signing key
-        run: |
-          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/ci.jks" -storepass android -keypass android \
-            -alias ci -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Spotube Android 6 CI"
-          cat >> composeApp/local.properties <<EOF2
-          release.signing.storeFile=$RUNNER_TEMP/ci.jks
-          release.signing.storePassword=android
-          release.signing.keyAlias=ci
-          release.signing.keyPassword=android
-          EOF2
-      - name: Assemble (release)
+      - name: Assemble (unsigned release)
         run: ./gradlew :composeApp:assembleStableRelease --stacktrace
       - name: Show Cargo build-script folders (diagnostics)
         if: failure()
