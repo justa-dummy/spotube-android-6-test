@@ -692,3 +692,22 @@ tasks.matching { it.name == "prepareAppResources" || it.name == "copyGraalvmAppR
         permissions { unix("rwxr-xr-x") }
     }
 }
+
+// Android 6 backport: fallback for uniffi.toml's omit_checksums, in case the bindings generator ignores it.
+// Makes the generated uniffiCheckApiChecksums() return before comparing (see uniffi.toml for why).
+tasks.matching { it.name.startsWith("compile") && it.name.contains("Kotlin") }.configureEach {
+    doFirst {
+        val generated = layout.buildDirectory.dir("generated").get().asFile
+        if (!generated.isDirectory) return@doFirst
+        val decl = Regex("""(fun\s+uniffiCheckApiChecksums\s*\([^)]*\)\s*(?::\s*Unit\s*)?\{)(?!\s*return\b)""")
+        generated.walkTopDown().filter { it.isFile && it.extension == "kt" }.forEach { file ->
+            val text = file.readText()
+            if (!text.contains("uniffiCheckApiChecksums")) return@forEach
+            val patched = decl.replace(text) { "${it.groupValues[1]}\n        return\n" }
+            if (patched != text) {
+                file.writeText(patched)
+                logger.lifecycle("android6: disabled UniFFI API checksum check in ${file.relativeTo(generated)}")
+            }
+        }
+    }
+}
