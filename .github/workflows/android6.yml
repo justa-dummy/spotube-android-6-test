@@ -10,9 +10,6 @@ env:
   # Force Rust 1.99 for every rustup/cargo call (overrides toolchain files and defaults).
   # Cargo 1.100 changed its build-dir layout, which Gobley 0.3.7 can't read.
   RUSTUP_TOOLCHAIN: 1.99.0
-  # Android 6 backport: getrandom() is only in Bionic from Android 9; make the getrandom
-  # crate use the raw syscall. (Same as .cargo/config.toml, in case that file is missing.)
-  CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS: --cfg getrandom_backend="linux_raw"
   COMPOSE_WEBVIEW_REPO: KRTirtho/ComposeNativeWebview
   COMPOSE_WEBVIEW_COMMIT: b11ac748de1219f9432338c067a2c5dafef3072a
 
