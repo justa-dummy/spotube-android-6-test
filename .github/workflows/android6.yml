@@ -7,6 +7,9 @@ permissions:
   contents: read
 
 env:
+  # Force Rust 1.99 for every rustup/cargo call (overrides toolchain files and defaults).
+  # Cargo 1.100 changed its build-dir layout, which Gobley 0.3.7 can't read.
+  RUSTUP_TOOLCHAIN: 1.99.0
   COMPOSE_WEBVIEW_REPO: KRTirtho/ComposeNativeWebview
   COMPOSE_WEBVIEW_COMMIT: b11ac748de1219f9432338c067a2c5dafef3072a
 
@@ -55,8 +58,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.0
       - uses: gradle/actions/setup-gradle@v6
       - run: chmod +x gradlew
+      - name: Show Rust toolchain
+        working-directory: composeApp
+        run: |
+          rustup show
+          rustc -V; cargo -V
+          which -a cargo rustc
+          if ! cargo -V | grep -q '^cargo 1\.99\.'; then echo "::error::Wrong Rust version"; exit 1; fi
       - name: Assemble (unsigned release)
         run: ./gradlew :composeApp:assembleStableRelease --stacktrace
+      - name: Show Cargo build-script folders (diagnostics)
+        if: failure()
+        run: |
+          find composeApp/target -maxdepth 4 -path '*build/quote*' | head -20
+          ls composeApp/target/release/build 2>/dev/null | head -20
       - name: Check native libraries for Android 7+ symbols
         if: always()
         run: |
