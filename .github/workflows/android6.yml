@@ -7,6 +7,12 @@ permissions:
   contents: read
 
 env:
+  # Force Rust 1.99 for every rustup/cargo call (overrides toolchain files and defaults).
+  # Cargo 1.100 changed its build-dir layout, which Gobley 0.3.7 can't read.
+  RUSTUP_TOOLCHAIN: 1.99.0
+  # Android 6 backport: getrandom() is only in Bionic from Android 9; make the getrandom
+  # crate use the raw syscall. (Same as .cargo/config.toml, in case that file is missing.)
+  CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS: --cfg getrandom_backend="linux_raw"
   COMPOSE_WEBVIEW_REPO: KRTirtho/ComposeNativeWebview
   COMPOSE_WEBVIEW_COMMIT: b11ac748de1219f9432338c067a2c5dafef3072a
 
@@ -60,8 +66,22 @@ jobs:
         run: |
           rustup show
           rustc -V; cargo -V
-      - name: Assemble (unsigned release)
-        run: ./gradlew :composeApp:assembleStableRelease --stacktrace
+          which -a cargo rustc
+          if ! cargo -V | grep -q '^cargo 1\.99\.'; then echo "::error::Wrong Rust version"; exit 1; fi
+      - name: Create a throwaway signing key
+        run: |
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/ci.jks" -storepass android -keypass android \
+            -alias ci -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Spotube Android 6 CI"
+          ls -l "$RUNNER_TEMP/ci.jks"
+      - name: Assemble (release)
+        # The android.injected.signing.* properties make AGP sign with this key,
+        # whatever the project's own signing config says.
+        run: |
+          ./gradlew :composeApp:assembleStableRelease --stacktrace \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/ci.jks" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=ci \
+            -Pandroid.injected.signing.key.password=android
       - name: Show Cargo build-script folders (diagnostics)
         if: failure()
         run: |
@@ -77,10 +97,10 @@ jobs:
             und=$(readelf --dyn-syms -W "$f" | awk '$7=="UND"{print $8}' | sed 's/@.*//' | sort -u)
             echo "== $f"; echo $und
             for sym in getrandom getentropy pthread_getattr_np_ aligned_alloc __system_property_read_callback; do
-              grep -qx "$sym" <<< "$und" && echo "::warning::$f imports $sym (needs a newer Android)"
+              grep -qx "$sym" <<< "$und" && { echo "::error::$f imports $sym (needs a newer Android)"; bad=1; }
             done
           done
-          true
+          [ -z "$bad" ]
       - name: Lint for Android 7+ API calls (report only)
         if: always()
         continue-on-error: true
