@@ -46,6 +46,9 @@ import io.ktor.utils.io.readAvailable
 import io.ktor.utils.io.writeFully
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -57,7 +60,10 @@ import okio.SYSTEM
 import okio.buffer
 import okio.use
 import org.koin.core.component.KoinComponent
+import kotlin.concurrent.Volatile
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 internal class StreamProxy(
@@ -72,6 +78,48 @@ internal class StreamProxy(
 
     companion object {
         private const val HOST = "127.0.0.1"
+
+        // A body write that hasn't moved for this long, while the player has asked for a different track,
+        // belongs to a connection the player already hung up on (see [BodyWriter]).
+        private val STALLED_WRITER_TIMEOUT = 30.seconds
+    }
+
+    /**
+     * One player-facing body write in progress.
+     *
+     * Ktor's CIO server does not cancel a handler when the player hangs up mid-response (skip, seek or track
+     * change): the connection pipeline ends, but the handler stays suspended forever on a full response
+     * buffer, holding ~1 MB there plus ~1 MB of upstream body and the upstream connection. One leaks per
+     * abandoned stream, which ran a 96 MB heap out of memory in under an hour.
+     *
+     * A writer that is stalled is not necessarily dead: when playback is paused the player stops reading
+     * and the live connection stalls too. So a stalled writer is only aborted once the player has requested
+     * a *different* track, which it only does after giving up on the old connection or finishing it.
+     */
+    private class BodyWriter(val trackId: String) {
+        lateinit var job: Job
+
+        @Volatile
+        var lastProgress: TimeMark = TimeSource.Monotonic.markNow()
+
+        @Volatile
+        var abortedAsStalled = false
+    }
+
+    private val bodyWriters = mutableSetOf<BodyWriter>()
+    private val bodyWritersMutex = Mutex()
+
+    private suspend fun abortStalledWriters(newTrackId: String) {
+        val stalled = bodyWritersMutex.withLock {
+            bodyWriters.filter {
+                it.trackId != newTrackId && it.lastProgress.elapsedNow() > STALLED_WRITER_TIMEOUT
+            }.also { bodyWriters.removeAll(it.toSet()) }
+        }
+        stalled.forEach {
+            logger.i { "[Req] aborting stalled body write for ${it.trackId} (idle ${it.lastProgress.elapsedNow()}, player moved on to $newTrackId)" }
+            it.abortedAsStalled = true
+            it.job.cancel(CancellationException("Player abandoned the connection"))
+        }
     }
 
     private val fileSystem = FileSystem.SYSTEM
@@ -454,8 +502,22 @@ internal class StreamProxy(
             override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
                 val writeStart = TimeSource.Monotonic.markNow()
                 logger.i { "[Req] start writing body for $trackId status=${upstream.status} cache=${cacheFilename != null} expected=$expectedLength" }
+                abortStalledWriters(trackId)
                 try {
-                    writeBody(channel)
+                    coroutineScope {
+                        // Own job, so a stalled write can be cancelled without cancelling this caller
+                        val writer = BodyWriter(trackId)
+                        writer.job = launch(start = CoroutineStart.LAZY) { writeBody(channel, writer) }
+                        bodyWritersMutex.withLock { bodyWriters.add(writer) }
+                        try {
+                            writer.job.start()
+                            writer.job.join()
+                        } finally {
+                            bodyWritersMutex.withLock { bodyWriters.remove(writer) }
+                        }
+                        // Fail rather than return, so the response isn't mistaken for a complete one
+                        if (writer.abortedAsStalled) throw IOException("Aborted stalled body write for $trackId")
+                    }
                     logger.i { "[Req] finished writing body for $trackId in ${writeStart.elapsedNow()}" }
                 } catch (e: Throwable) {
                     logger.i(e) { "[Req] body write for $trackId aborted after ${writeStart.elapsedNow()}: ${e::class.simpleName}: ${e.message}" }
@@ -463,7 +525,7 @@ internal class StreamProxy(
                 }
             }
 
-            private suspend fun writeBody(channel: io.ktor.utils.io.ByteWriteChannel) {
+            private suspend fun writeBody(channel: io.ktor.utils.io.ByteWriteChannel, writer: BodyWriter) {
                 if (cacheFilename != null) {
                     val cacheDir = cacheManager.resolveCacheDir()
                     val cacheFile = cacheDir / cacheFilename.toPath()
@@ -480,6 +542,7 @@ internal class StreamProxy(
                                 if (read == 0) continue
                                 channel.writeFully(buffer, 0, read)
                                 channel.flush()
+                                writer.lastProgress = TimeSource.Monotonic.markNow()
                                 sink.write(buffer, 0, read)
                                 totalBytes += read
                             }
@@ -502,7 +565,16 @@ internal class StreamProxy(
                         }
                     }
                 } else {
-                    upstream.bodyAsChannel().copyTo(channel)
+                    val source = upstream.bodyAsChannel()
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = source.readAvailable(buffer, 0, buffer.size)
+                        if (read < 0) break
+                        if (read == 0) continue
+                        channel.writeFully(buffer, 0, read)
+                        channel.flush()
+                        writer.lastProgress = TimeSource.Monotonic.markNow()
+                    }
                 }
             }
         })
